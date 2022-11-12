@@ -1,0 +1,9 @@
+[Unit]
+Description=Service for Raspberry Pi fan control
+
+[Service]
+ExecStart=/usr/local/bin/rpi_fan_control
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
