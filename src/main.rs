@@ -1,4 +1,4 @@
-use std::io::ErrorKind;
+use std::{f32::consts::PI, io::ErrorKind};
 
 use rppal::pwm::{Channel, Polarity, Pwm};
 use sysinfo::{ComponentExt, System, SystemExt};
@@ -51,12 +51,18 @@ fn get_cpu_temp(sys: &mut System) -> f32 {
     cpu_temp
 }
 
+fn fan_curve(temp: f32) -> f32 {
+    (0.5 * (1.0 - ((PI * temp) / 50.0).sin())
+        + (FAN_LOW + ((temp - MIN_TEMP).min(MAX_TEMP) * FAN_GAIN)))
+        / 2.0
+}
+
 /// Returns the fan speed as a value between 0.0 and 1.0.
 fn handle_fan_speed(cpu_temp: f32, pwm: &mut Pwm) -> Result<(), std::io::Error> {
     let fan_speed = match cpu_temp {
         t if t < OFF_TEMP => FAN_OFF,
         t if t < MIN_TEMP => FAN_LOW,
-        t if t < MAX_TEMP => FAN_LOW + ((t - MIN_TEMP).min(MAX_TEMP) * FAN_GAIN),
+        t if t < MAX_TEMP => fan_curve(t),
         _ => FAN_MAX,
     };
     println!("CPU temp: {}°C, fan speed: {}%", cpu_temp, fan_speed);
