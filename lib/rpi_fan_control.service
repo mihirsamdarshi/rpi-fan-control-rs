@@ -2,7 +2,7 @@
 Description=Service for Raspberry Pi fan control
 
 [Service]
-ExecStart=/usr/local/bin/rpi_fan_control
+ExecStart=/usr/local/sbin/rpi_fan_control
 Restart=on-failure
 
 [Install]
