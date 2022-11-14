@@ -11,4 +11,3 @@ path = "src/main.rs"
 
 [dependencies]
 rppal = "^0.14.0"
-sysinfo = { version = "^0.26.7", default-features = false }
