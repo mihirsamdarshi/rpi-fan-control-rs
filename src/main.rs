@@ -71,8 +71,8 @@ fn handle_fan_speed(cpu_temp: f32, pwm: &mut Pwm) -> Result<(), std::io::Error> 
         t if t < MAX_TEMP => fan_curve(t),
         _ => FAN_MAX,
     };
-    println!("CPU temp: {}°C, fan speed: {}%", cpu_temp, fan_speed);
-    pwm.set_duty_cycle(fan_speed as f64)
+    println!("CPU temp: {cpu_temp}°C, fan speed: {}%", fan_speed * 100.0);
+    pwm.set_duty_cycle(f64::from(fan_speed))
         .map_err(|rppal::pwm::Error::Io(e)| e)?;
     Ok(())
 }
@@ -84,26 +84,24 @@ fn main() {
             Err(rppal::pwm::Error::Io(e)) => match e.kind() {
                 ErrorKind::PermissionDenied => {
                     eprintln!(
-                        "{}\n\n{}",
                         "Make sure /sys/class/pwm and all of its subdirectories are owned by \
                          root:gpio, the current user is a member of the gpio group, and udev is \
                          properly configured as mentioned below. Alternatively, you can launch \
-                         your application using sudo.",
+                         your application using sudo.\n\n{}",
                         UDEV_ERROR
                     );
                     std::process::exit(1);
                 }
                 ErrorKind::NotFound => {
                     eprintln!(
-                        "{}\n\n{}",
                         "You may have forgotten to enable the selected PWM channel. The \
                          configuration options to enable either of the two PWM channels are \
-                         listed below.",
+                         listed below.\n\n{}",
                         PERMISSION_ERROR
                     );
                     std::process::exit(1);
                 }
-                _ => panic!("Error: {}", e),
+                _ => panic!("Error: {e}"),
             },
         };
 
