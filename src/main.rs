@@ -152,7 +152,8 @@ fn main() {
             }
             _ => panic!("Error: {e}"),
         },
-    }.into_input_pullup();
+    }
+    .into_input_pullup();
 
     fan_speed_pin
         .set_async_interrupt(Trigger::FallingEdge, |_| {
@@ -176,7 +177,8 @@ fn main() {
         let fan_percentage =
             handle_fan_speed(cpu_temp, &mut pwm_pin).expect("Error setting fan speed");
         let mut rpm_guard = RPM.lock().unwrap();
-        let avg_rpm = rpm_guard.drain(..).reduce(|acc, x| acc + x).unwrap_or(0.0) / rpm_guard.len() as f32;
+        let avg_rpm =
+            rpm_guard.drain(..).reduce(|acc, x| acc + x).unwrap_or(0.0) / rpm_guard.len() as f32;
         println!(
             "CPU Temp: {cpu_temp:.2}°C, Fan Percentage: {fan_percentage:.2}%, Fan Speed: \
              {avg_rpm:.2} RPM",
