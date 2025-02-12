@@ -10,7 +10,7 @@ service_exists() {
     fi
 }
 
-cargo build -Zbuild-std --release
+cargo build --release
 
 if service_exists rpi_fan_control; then
   sudo systemctl stop rpi_fan_control
@@ -18,8 +18,6 @@ fi
 # Install the package
 sudo cp target/aarch64-unknown-linux-gnu/release/rpi_fan_control /usr/local/sbin/
 sudo cp lib/rpi_fan_control.service /etc/systemd/system/rpi_fan_control.service
-
-cargo build -Zbuild-std --release
 
 if service_exists rpi_fan_control; then
   sudo systemctl daemon-reload
