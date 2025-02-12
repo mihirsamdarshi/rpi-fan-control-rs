@@ -1,14 +1,12 @@
-use std::{
-    f32::consts::PI,
-    io::ErrorKind,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
-
-use once_cell::sync::Lazy;
 use rppal::{
     gpio::{Gpio, Trigger},
     pwm::{Channel, Polarity, Pwm},
+};
+use std::{
+    sync::mpsc,
+    f32::consts::PI,
+    io::ErrorKind,
+    time::{Duration, Instant},
 };
 
 /// The PWM frequency that the PWM fan should operate at (for the Noctua A4x10)
@@ -70,9 +68,8 @@ More information can be found at https://github.com/raspberrypi/linux/issues/122
 
 /// Returns the temperature of the CPU in degrees Celsius.
 fn get_cpu_temp() -> f32 {
-    let temp_unparsed = match std::fs::read_to_string("/sys/class/thermal/thermal_zone0/temp") {
-        Ok(temp) => temp,
-        Err(e) => match e.kind() {
+    let temp_unparsed = std::fs::read_to_string("/sys/class/thermal/thermal_zone0/temp")
+        .unwrap_or_else(|e| match e.kind() {
             ErrorKind::PermissionDenied => {
                 panic!("Failed to read /sys/class/thermal/thermal_zone0/temp.")
             }
@@ -80,8 +77,7 @@ fn get_cpu_temp() -> f32 {
                 panic!("No temperature sensor found. Make sure you're running on a Raspberry Pi.")
             }
             _ => "45000".to_string(),
-        },
-    };
+        });
     temp_unparsed.trim().parse::<f32>().unwrap_or(45000.0) / 1000.0
 }
 
@@ -95,7 +91,7 @@ fn fan_curve(temp: f32) -> f32 {
 }
 
 /// Returns the fan speed as a value between 0.0 and 1.0.
-fn handle_fan_speed(cpu_temp: f32, pwm: &mut Pwm) -> Result<f32, std::io::Error> {
+fn handle_fan_speed(cpu_temp: f32, pwm: &mut Pwm) -> f32 {
     let fan_percentage = match cpu_temp {
         t if t < OFF_TEMP => FAN_OFF,
         t if t < MIN_TEMP => FAN_LOW,
@@ -103,12 +99,9 @@ fn handle_fan_speed(cpu_temp: f32, pwm: &mut Pwm) -> Result<f32, std::io::Error>
         _ => FAN_MAX,
     };
     pwm.set_duty_cycle(f64::from(fan_percentage))
-        .map_err(|rppal::pwm::Error::Io(e)| e)?;
-    Ok(fan_percentage * 100.0)
+        .expect("Failed to set fan-percentage.");
+    fan_percentage * 100.0
 }
-
-static TIME_DIFF: Lazy<Arc<Mutex<Instant>>> = Lazy::new(|| Arc::new(Mutex::new(Instant::now())));
-static RPM: Lazy<Arc<Mutex<Vec<f32>>>> = Lazy::new(|| Arc::new(Mutex::new(vec![0.0])));
 
 fn main() {
     let mut pwm_pin =
@@ -136,6 +129,7 @@ fn main() {
                 }
                 _ => panic!("Error: {e}"),
             },
+            Err(e) => panic!("Error: {}", e),
         };
 
     let gpio = Gpio::new().unwrap();
@@ -155,35 +149,55 @@ fn main() {
     }
     .into_input_pullup();
 
-    fan_speed_pin
-        .set_async_interrupt(Trigger::FallingEdge, |_| {
-            let mut time_diff = TIME_DIFF.lock().unwrap();
-            let dt = Instant::now() - time_diff.clone();
+    // Create an mpsc channel for sending RPM values from the interrupt callback to main.
+    let (rpm_tx, rpm_rx) = mpsc::channel::<f32>();
 
+    // The interrupt callback will keep its own local state:
+    // a mutable variable for the last tick time.
+    let mut last_tick = Instant::now();
+
+    fan_speed_pin
+        .set_async_interrupt(Trigger::FallingEdge, None, move |_| {
+            let now = Instant::now();
+            let dt = now - last_tick;
+            
             if dt < Duration::from_millis(5) {
                 return;
             }
 
             let freq: f32 = 1.0 / dt.as_secs_f32();
             let rpm = (freq / FAN_PULSE) * 60.0;
-            let mut rpm_guard = RPM.lock().unwrap();
-            (*rpm_guard).push(rpm);
-            *time_diff = Instant::now();
+            // Update last_tick for the next measurement.
+            last_tick = now;
+
+            // Send the computed RPM over the channel.
+            if let Err(e) = rpm_tx.send(rpm) {
+                eprintln!("Failed to send RPM value: {e}");
+            }
         })
         .unwrap();
 
     loop {
         let cpu_temp = get_cpu_temp();
-        let fan_percentage =
-            handle_fan_speed(cpu_temp, &mut pwm_pin).expect("Error setting fan speed");
-        let mut rpm_guard = RPM.lock().unwrap();
-        let avg_rpm =
-            rpm_guard.drain(..).reduce(|acc, x| acc + x).unwrap_or(0.0) / rpm_guard.len() as f32;
+        let fan_percentage = handle_fan_speed(cpu_temp, &mut pwm_pin);
+        // Collect any RPM values sent by the callback.
+        let mut rpm_values = Vec::new();
+        // Using try_iter() to grab all available values without blocking.
+        for rpm in rpm_rx.try_iter() {
+            rpm_values.push(rpm);
+        }
+
+        // Compute an average RPM if we have any values.
+        let avg_rpm = if rpm_values.is_empty() {
+            0.0
+        } else {
+            rpm_values.iter().sum::<f32>() / rpm_values.len() as f32
+        };
+
         println!(
             "CPU Temp: {cpu_temp:.2}°C, Fan Percentage: {fan_percentage:.2}%, Fan Speed: \
              {avg_rpm:.2} RPM",
         );
-        *rpm_guard = Vec::new();
         std::thread::sleep(Duration::from_secs(5));
     }
 }
